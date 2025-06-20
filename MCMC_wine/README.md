@@ -1,1 +1,1 @@
-This was an individual prroject.
+This was an individual project.
