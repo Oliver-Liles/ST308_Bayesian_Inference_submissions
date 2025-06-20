@@ -18,7 +18,6 @@ taster_twitter_handle, title, variety, winery.
 
 # --- Importing necessary libraries (and setting working directory) ---
 ```{r}
-setwd("~/Uni/Year3/st308")
 library(rstanarm)
 library(rstan)
 library(MASS)
