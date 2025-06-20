@@ -1,0 +1,317 @@
+---
+title: "ST308 Project"
+output:
+  word_document: default
+  html_notebook: default
+  pdf_document: default
+---
+
+## About the data set
+
+"https://www.kaggle.com/datasets/zynicide/wine-reviews?resource=download"
+
+The data I've chosen to use if from 'Kaggle' and was scraped from 'WineEnthusiast'
+during the week of June 15th, 2017. It contains data about: country, description, 
+designation, points (quality), price, province, region_1, region_2, taster_name, 
+taster_twitter_handle, title, variety, winery.
+
+
+# --- Importing necessary libraries (and setting working directory) ---
+```{r}
+setwd("~/Uni/Year3/st308")
+library(rstanarm)
+library(rstan)
+library(MASS)
+library(glmnet)
+library(ggplot2)
+```
+
+# --- Data cleaning ---
+
+# Importing wine data
+```{r}
+wine <- read.csv("wine_data.csv", fileEncoding = "UTF-8")
+colnames(wine)[c(1, 3, 5, 11, 12)] <- c("id", "desc", "rating", "twitter", 
+                                        "review_title")
+print("columns (variables):")
+colnames(wine)
+print("dimensions:")
+dim(wine)
+```
+
+# Selecting chosen categories
+```{r}
+# assessing null or empty values 
+na_or_empty_count <- sapply(wine, function(x) sum(is.na(x) | x == ""))
+result <- data.frame(
+  variables = names(na_or_empty_count),
+  na_or_empty_count = as.vector(na_or_empty_count),
+  stringsAsFactors = FALSE
+)
+result <- result[order(-result$na_or_empty_count), ]
+print(result)
+
+# selecting only necessary categories (which have sufficiently low levels of missing data)
+wine <- subset(wine, select=c("country", "rating", "price", "province", "variety"))
+
+# removing null or empty values
+wine <- wine[apply(wine, 1, function(row) all(!is.na(row) & row != "")), ]
+
+# creating a centered rating to speed up convergence
+wine$rating <- as.numeric(as.character(wine$rating))
+wine$rating_c <- wine$rating - mean(wine$rating)
+
+# creating log_price to reduce the influence of higher priced outliers and make
+# a more linear relationship with ratings
+wine$price <- as.numeric(wine$price)
+wine$log_price <- log2(wine$price) # base 2 chosen based on exploration of data
+
+# creating lists of columns which are continuous, and categorical / discrete
+cont_vars = c("price", "log_price", "rating", "rating_c")
+cat_vars = c("country", "province", "variety")
+
+# converting 'country', 'province', and 'region_1' to factors
+for (var in cat_vars) {
+  wine[[var]] <- factor(wine[[var]])
+}
+
+# removing provinces with less than 10 values
+wine <- wine[table(wine$province)[wine$province] >= 10, ]
+wine$province <- droplevels(wine$province)
+
+# removing countries with less than 10 values
+wine <- wine[table(wine$country)[wine$country] >= 10, ]
+wine$country <- droplevels(wine$country)
+
+# reviewing changes to data
+print("chosen variables:")
+colnames(wine)
+print("new dimensions:")
+dim(wine)
+```
+
+# --- Data Exploration (EDA) ---
+```{r}
+# data structure
+str(wine)
+
+# viewing summary stats for continuous variables
+summary(wine[, cont_vars])
+cat("\n")
+
+# histogram of wine prices to show why log price is needed
+hist(wine$price, freq = FALSE, col = "skyblue", border = "black",
+     main = "Histogram of Wine Prices with Normal Curve",
+     xlab = "Prices")
+mean_price <- mean(wine$price)
+sd_price <- sd(wine$price)
+x_vals <- seq(min(wine$price), max(wine$price), length = 100)
+y_vals <- dnorm(x_vals, mean = mean_price, sd = sd_price)
+lines(x_vals, y_vals, col = "darkred", lwd = 2)
+cat("The prices have mean average, ", mean_price, ", and standard deviation, ", 
+    sd_price, ". ", "\n")
+
+# histogram of log prices
+hist(wine$log_price, freq = FALSE, col = "darkgreen", border = "black",
+     main = "Histogram of Wine Log Prices with Normal Curve",
+     xlab = "Log Prices")
+mean_logprice <- mean(wine$log_price)
+sd_logprice <- sd(wine$log_price)
+x_vals <- seq(min(wine$log_price), max(wine$log_price), length = 100)
+y_vals <- dnorm(x_vals, mean = mean_logprice, sd = sd_logprice)
+lines(x_vals, y_vals, col = "navy", lwd = 2)
+cat("The log prices seem to roughly follow a normal distribution around", 
+    mean_logprice, "in the historgram, with a standard deviation of", 
+    sd_logprice, ".")
+```
+
+```{r}
+# viewing number of unique values of categorical variables
+unique_counts <- sapply(cat_vars, function(var) {
+  length(unique(wine[[var]]))
+})
+unique_counts_df <- data.frame(
+  category = names(unique_counts),
+  unique_count = as.integer(unique_counts),
+  stringsAsFactors = FALSE
+)
+unique_counts_df <- unique_counts_df[order(-unique_counts_df$unique_count), ]
+print(unique_counts_df)
+
+# boxplot of log prices by country for relative comparison
+boxplot(log_price ~ country, data = subset(wine),
+        las = 2, col = "lightblue", main = "Wine (Log) Prices by Country")
+```
+
+```{r}
+# removing variety as it has a very high count of unique values which will make interpretation more difficult
+wine <- wine[, !names(wine) %in% "variety"]
+cat_vars = c("country", "province")
+dim(wine)
+```
+
+```{r}
+# find countries with the highest level of data
+country_counts <- table(wine$country)
+top_countries <- sort(country_counts, decreasing = TRUE)[1:5]
+print(top_countries)
+
+# filter for US provinces and drop unused factor levels
+us_data <- subset(wine, country == 'US')
+us_data$province <- droplevels(us_data$province)
+# create boxplot for only USA provinces
+boxplot(log_price ~ province, data = us_data, col="red",
+        las = 2, main = "Wine (Log) Prices by Region in the US", 
+        xlab = "Province", ylab = "Wine Log Price")
+
+# filter for French provinces and drop unused factor levels
+france_data <- subset(wine, country == 'France')
+france_data$province <- droplevels(france_data$province)
+# create boxplot for only French provinces
+boxplot(log_price ~ province, data = france_data, col="royalblue",
+        las = 2, main = "Wine (Log) Prices by Region in France", 
+        xlab = "Province", ylab = "Wine Log Prices")
+
+# filter for Italian provinces and drop unused factor levels
+italy_data <- subset(wine, country == 'Italy')
+italy_data$province <- droplevels(italy_data$province)
+# create boxplot for only Italian provinces
+boxplot(log_price ~ province, data = italy_data, col="green",
+        las = 2, main = "Wine (Log) Prices by Region in Italy", 
+        xlab = "Province", ylab = "Wine Log Price")
+```
+
+# Lasso and Ridge regression modelling
+```{r}
+set.seed(42)
+
+# creating design matrix (X) and response vector (y)
+X <- model.matrix(log_price ~ rating_c + country + province, data = wine)[, -1]
+y <- wine$log_price
+
+# splitting data into training and test sets (80:20)
+train_idx <- sample(seq_along(y), size = 0.8 * length(y))
+X_train <- X[train_idx, ]
+X_test  <- X[-train_idx, ]
+y_train <- y[train_idx]
+y_test  <- y[-train_idx]
+
+# grid of lambda values
+lambda_grid <- 10^seq(4, -2, length = 100)
+
+# ridge
+ridge_model <- cv.glmnet(X_train, y_train, alpha = 0, lambda = lambda_grid)
+ridge_best_lambda <- ridge_model$lambda.min
+cat("Ridge best lambda:", ridge_best_lambda, "\n")
+ridge_pred <- predict(ridge_model, s = ridge_best_lambda, newx = X_test)
+ridge_mse <- mean((ridge_pred - y_test)^2)
+cat("Ridge test MSE:", ridge_mse, "\n\n")
+
+# lasso
+lasso_model <- cv.glmnet(X_train, y_train, alpha = 1, lambda = lambda_grid)
+lasso_best_lambda <- lasso_model$lambda.min
+cat("Lasso best lambda:", lasso_best_lambda, "\n")
+lasso_pred <- predict(lasso_model, s = lasso_best_lambda, newx = X_test)
+lasso_mse <- mean((lasso_pred - y_test)^2)
+cat("Lasso test MSE:", lasso_mse, "\n")
+
+# view number of selected coefficients for lasso
+cat("\n", length(coef(lasso_model, s = lasso_best_lambda)[coef(lasso_model, s = lasso_best_lambda) != 0]), 
+    "out of", length(coef(lasso_model, s = lasso_best_lambda)), "coefficients were selected (had non-zero values) by lasso.", "\n")
+print(print(coef(lasso_model, s = lasso_best_lambda)[coef(lasso_model, s = lasso_best_lambda)[, 1] != 0, , drop = TRUE]))
+```
+
+# --- Creating models ---
+```{r}
+model_logprice <- stan_glmer(
+  log_price ~ rating_c + (1 | country/province),
+  data = wine,
+  family = gaussian(),
+  prior = normal(0, 1),
+  prior_intercept = normal(mean(wine$log_price), 1),
+  seed = 42,
+  chains = 4,
+  cores = 8,
+  iter = 2000
+)
+```
+
+```{r}
+# saving the model
+if (file.exists("model_logprice.rds") == FALSE) {
+  saveRDS(model_logprice, file = "model_logprice.rds")
+}
+```
+
+```{r}
+# loading the model
+if (file.exists("model_logprice.rds")) {
+  model_logprice <- readRDS("model_logprice.rds")
+  cat("Model loaded successfully.")
+}
+```
+
+# --- Posterior Predictive Check ---
+```{r}
+pp_check(model_logprice)
+```
+
+# --- Convergence Diagnostics ---
+```{r}
+# check r-hat values (should be close to 1)
+model_summary <- summary(model_logprice)
+rhat_vals <- model_summary[, "Rhat"]
+cat("\n", "summary of rhat values: ", "\n")
+print(summary(rhat_vals))
+
+# trace plots for 
+plot(model_logprice, plotfun = "trace", pars = c("(Intercept)"))
+plot(model_logprice, plotfun = "trace", pars = c("rating_c"))
+plot(model_logprice, plotfun = "trace", pars = c("b[(Intercept) country:US]"))
+plot(model_logprice, plotfun = "trace", pars = c("b[(Intercept) country:France]",
+                                                 "b[(Intercept) country:Greece]",
+                                                 "b[(Intercept) country:Italy]",
+                                                 "b[(Intercept) country:Germany]"))
+```
+
+# --- Posterior Analysis ---
+```{r}
+options(max.print = 10000)
+
+# summary of model, including credible intervals
+print(summary(model_logprice, probs = c(0.05, 0.5, 0.95)), digits = 2)
+```
+
+# --- Examining random effects --- 
+```{r}
+# random effects
+ranef_model <- ranef(model_logprice)
+print(ranef_model)
+
+# plotting variation in random intercepts for countries
+country_effects <- ranef_model$country
+country_df <- data.frame(country = rownames(country_effects), effect = 
+                         country_effects[,1])
+ggplot(country_df, aes(x = reorder(country, effect), y = effect)) +
+       geom_point() +
+       coord_flip() +
+       labs(title = "Random Intercepts by Country", x = "Country", y = "Effect on 
+            Log Price")
+
+# plotting variation in random intercepts for province
+province_effects <- ranef_model$province
+print(province_effects)
+us_province_effects <- subset(province_effects, )
+province_df <- data.frame(province = rownames(province_effects), effect = 
+                          province_effects[,1])
+ggplot(province_df, aes(x = reorder(province, effect), y = effect)) +
+       geom_point() +
+       coord_flip() +
+       labs(title = "Random Intercepts by Province", x = "Province", y = "Effect on 
+            Log Price")
+```
+
+# --- Prior Summary ---
+```{r}
+prior_summary(model_logprice)
+```
