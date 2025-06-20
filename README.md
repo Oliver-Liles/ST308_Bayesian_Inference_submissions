@@ -4,7 +4,7 @@
 
 **Contents:**
 
-1. Using Markov Chain Monte Carlo (MCMC) to model wine pricing<sup>[[1]](https://github.com/Oliver-Liles/ST308_Bayesian_Inference_submissions/tree/main/MCMC_wine)</sup>
+1. Using Markov Chain Monte Carlo (MCMC) in R to model wine pricing<sup>[[1]](https://github.com/Oliver-Liles/ST308_Bayesian_Inference_submissions/tree/main/MCMC_wine)</sup>
 
 
 Course Information for ST308 can be found here:
