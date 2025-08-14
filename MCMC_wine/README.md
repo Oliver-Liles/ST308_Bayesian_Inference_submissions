@@ -1,3 +1,5 @@
-This was an individual project.
+### Notes:
 
-##### *Awaiting feedback.*
+- This was an *individual* project
+- This project received a **2:1** grade
+- *No feedback was given*
